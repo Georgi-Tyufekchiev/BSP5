@@ -1,4 +1,8 @@
+import math
+
 import numpy as np
+from Crypto.Random import get_random_bytes as rng
+from Crypto.Util.number import bytes_to_long
 
 
 def vanderMatrix(N, t):
@@ -13,11 +17,19 @@ def vanderMatrix(N, t):
     return np.vander(x, n)
 
 
-def computeRandElem(vander, shares):
+def computeVanderElem(vander, shares):
     """
     Compute [r1...r(n-t)] = M(s1...sn)
     :param vander: vander matrix
     :param shares: shares of parties
     :return: [r1...r(n-t)]
     """
-    return np.dot(np.transpose(vander), shares)
+    s = [shares[i][1] for i in range(len(shares))]
+    return np.dot(np.transpose(vander), s)
+
+
+def challenge(parties):
+    x = 2 ** 512 - 1
+    entropyBytes = math.floor((math.log(x, 2) / parties / 8))
+    challenges = [bytes_to_long(rng(entropyBytes)) for _ in range(parties)]
+    return challenges
