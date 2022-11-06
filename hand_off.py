@@ -39,10 +39,11 @@ class Handoff:
         # STEP 1: Create the coupled sharing for each Pi i.e (u,u~) and (v,v~)
         tic = cnt()
         committee = {}
+        print("PROTOCOL 3 DISTRIBUTION:")
         for i in range(self.PARTIES):
             committee[i] = self.sss.coupledSharing()
         toc = cnt()
-        print(f"Coupled sharing {toc - tic:0.4f} seconds")
+        print(f"Coupled sharing in {(toc - tic) / self.PARTIES:0.6f} seconds per party")
         # STEP 2: Compute the commitment of (u,v) and (u~,v~) for each Pi
         tic = cnt()
         for i in range(self.PARTIES):
@@ -52,7 +53,7 @@ class Handoff:
             self.commit[i] = (commit_to_poly(uPoly[0], vPoly[0], self.__setup),
                               commit_to_poly(uPoly[1], vPoly[1], self.__setup))
         toc = cnt()
-        print(f"Commit {toc - tic:0.4f} seconds")
+        print(f"Committing to polynomials in {(toc - tic) / self.PARTIES:0.6f} seconds per party")
 
         # Create the witness for (u,v) and (u~,v~) for each Pi
         proof = {}
@@ -65,6 +66,7 @@ class Handoff:
         # First Each party evaluates the polynomials at a random point x
         # Each party make the tuple (proof, f(x), h(x)) -> this will be given to the old committee
         # The steps above are done again but for the new committee with different polynomials
+        print("Each Party i will compute the witness for every Party j - O(n^2)")
         for i in range(self.PARTIES):
             uPoly = committee[i][0]
             vPoly = committee[i][1]
@@ -89,14 +91,14 @@ class Handoff:
                 )
 
         toc = cnt()
-        print(f"Proof {toc - tic:0.4f} seconds")
+        print(f"Proofs done in {(toc - tic) / self.PARTIES:0.6f} seconds per Party i")
 
         # For each Pj in Old Committee, Pi sends Pj the j-th share of (u,v) and the (x,proof,f(x),h(x))
         # For each Pj in New Committee, Pi sends Pj the j-th share of (u~,v~) and the (x,proof~,f~(x),h~(x))
         oldCommittee = {}
         newCommittee = {}
         tic = cnt()
-
+        print("Starting distribution - O(n^2)")
         for i in range(self.PARTIES):
             uShares = committee[i][2][0]
             vShares = committee[i][3][0]
@@ -123,32 +125,32 @@ class Handoff:
                     newCommittee[j][2].append(witnessTilde)
 
         toc = cnt()
-        print(f"Distribute {toc - tic:0.4f} seconds")
+        print(f"Distribute done in {(toc - tic) / self.PARTIES:0.6f} seconds per party i")
 
         # Each Pi in old/new committee executes VerifyPoly to validate the shares and the witness
         tic = cnt()
+        print("Starting validation - O(n^2)")
+        for i in range(self.PARTIES):
+            for j in range(self.PARTIES):
+                witness = oldCommittee[i][2][j]
+                xi, witnessTup = list(witness)[0]
+                w, fx, hx = witnessTup
+                oCommit = self.commit[j][0]
 
-        # for i in range(self.PARTIES):
-        #     for j in range(self.PARTIES):
-        #         witness = oldCommittee[i][2][j]
-        #         xi, witnessTup = list(witness)[0]
-        #         w, fx, hx = witnessTup
-        #         oCommit = self.commit[j][0]
-        #
-        #         if not check_proof_single(oCommit, w, xi, fx, hx, self.__setup):
-        #             print("Validation BAD FOR OLD %d %d" % (i, j))
-        #             self.oValidations.append((j, witness, oCommit))
-        #
-        #         nCommit = self.commit[j][1]
-        #         witness = newCommittee[i][2][j]
-        #         xi, witnessTup = list(witness)[0]
-        #         w, fx, hx = witnessTup
-        #         if not check_proof_single(nCommit, w, xi, fx, hx, self.__setup):
-        #             print("Validation BAD FOR NEW %d %d" % (i, j))
-        #             self.nValidations.append((j, witness, nCommit))
+                if not check_proof_single(oCommit, w, xi, fx, hx, self.__setup):
+                    print("Validation BAD FOR OLD %d %d" % (i, j))
+                    self.oValidations.append((j, witness, oCommit))
+
+                nCommit = self.commit[j][1]
+                witness = newCommittee[i][2][j]
+                xi, witnessTup = list(witness)[0]
+                w, fx, hx = witnessTup
+                if not check_proof_single(nCommit, w, xi, fx, hx, self.__setup):
+                    print("Validation BAD FOR NEW %d %d" % (i, j))
+                    self.nValidations.append((j, witness, nCommit))
 
         toc = cnt()
-        print(f"Validate {toc - tic:0.4f} seconds")
+        print(f"Validation done in {(toc - tic) / self.PARTIES:0.6f} seconds per party i")
         return oldCommittee, newCommittee
 
     def accusation(self):
@@ -163,6 +165,7 @@ class Handoff:
         # Compute the validation once again
         # If the validation fails then the party is corrupt
         # If the validation is ok then the party is honest
+        print("PROTOCOL 4 ACCUSATION")
         if len(self.oValidations) > 0 or len(self.nValidations) > 0:
             try:
                 for party in self.oValidations:
@@ -187,6 +190,8 @@ class Handoff:
 
         # committee = {1 : [u,v,w,uShares,vShares]}
         # committee = {1 : [mu,vu,w,muShares,vuShares]}
+        print("PROTOCOL 5 VERIFICATION")
+
         def _verificationPoly(X, firstShares, secondShares):
             """
             Compute the shares of the polynomials F(X) = (mu + u*X)*X^(2i-2), H(X) = (vu + v*X)*X^(2*i-2)
@@ -246,7 +251,9 @@ class Handoff:
             return commit_to_poly(u, v, self.__setup), commit_to_poly(mu, vu, self.__setup)
 
         # Invoke the distribution protocol to create the mu and vu coupled sharing
+        print("EXECUTE PROTOCOL 3 SECOND TIME")
         oldCommitteeD2, newCommitteeD2 = self.distribution()
+        print("EXECUTE CHALLENGE PROTOCOL")
         lambdas = challenge(self.PARTIES)
         oldCommittee = {}
         newCommittee = {}
@@ -254,6 +261,7 @@ class Handoff:
         x = 5431
 
         tic = cnt()
+        print("COMPUTING F(X), H(X), F~(X), H~(X) AND THEIR WITNESSES")
         for i in range(self.PARTIES):
             # Create the F(X) and H(X) polynomials
             # Compute the witnesses for those polynomials
@@ -265,7 +273,7 @@ class Handoff:
             newCommittee[i] = (fx[0], hx[0],
                                compute_proof_single(fx[1], hx[1], x, self.__setup))
         toc = cnt()
-        print(f"Compute F(X) and H(X) with their w {toc - tic:0.4f} seconds")
+        print(f"Compute F(X) and H(X) with their w in {(toc - tic)/self.PARTIES:0.6f} seconds per party")
 
         oCommit = {}
         nCommit = {}
@@ -278,10 +286,11 @@ class Handoff:
         #
         #     nCommit[i] = _commitments(newC,newCommitteeD2,i)
         toc = cnt()
-        print(f"Compute commitments {toc - tic:0.4f} seconds")
+        print("STILL NOT VALIDATING THE COMMITMENT - TODO")
+        # print(f"STILL NOT DONE!!!!Compute commitments {toc - tic:0.6f} seconds")
 
         tic = cnt()
-
+        print("START RECONSTCTION OF F(X) H(X) F~(X) H~(X) FROM T+1 SHARES")
         shares = [(0, 0)] * (self.THRESHOLD + 2)
         f = _reconstruction(shares, oldCommittee)
         fTilde = _reconstruction(shares, newCommittee)
@@ -290,7 +299,7 @@ class Handoff:
         assert f == fTilde
         assert h == hTilde
         toc = cnt()
-        print(f"Equalities are ok {toc - tic:0.4f} seconds")
+        print(f"Equalities are ok {toc - tic:0.6f} seconds")
 
         checkOldCommitments = {}
         checkNewCommitments = {}
@@ -303,26 +312,66 @@ class Handoff:
         #
         # assert checkNewCommitments == nCommit
         # assert checkOldCommitments == oCommit
-        print("Passed commit check")
 
     def output(self, oldCommittee, newCommittee):
         """
         Protocol 7 "Output"
         :return:
         """
+        print("STARTING PROTOCOL 7 OUTPUT")
         vander = vanderMatrix(self.PARTIES, self.THRESHOLD)
         r = {}
         phy = {}
         rTilde = {}
         phyTilde = {}
-        # TODO: FINISH THE PROTOCOL
+        tic = cnt()
         for i in range(self.PARTIES):
-            r[i] = computeVanderElem(vander, oldCommittee[i][3])
-            phy[i] = computeVanderElem(vander, oldCommittee[i][4])
-            rTilde[i] = computeVanderElem(vander, newCommittee[i][3])
-            phyTilde[i] = computeVanderElem(vander, newCommittee[i][4])
+            r[i] = computeVanderElem(vander, oldCommittee[i][0])
+            phy[i] = computeVanderElem(vander, oldCommittee[i][1])
+            rTilde[i] = computeVanderElem(vander, newCommittee[i][0])
+            phyTilde[i] = computeVanderElem(vander, newCommittee[i][1])
 
-    def refresh(self, oldCommittee, newCommittee):
+        toc = cnt()
+        print(f"COMPUTED VANDERMONDE ELEMENTS [r] [phy] [r~] [phy~] in {(toc - tic)/self.PARTIES:0.6f} seconds per party")
+
+        oCommit = {}
+        oProof = {}
+        x = [i for i in range(100, 110)]
+        print("COMMITING TO R AND PHY AND THEIR WITNESSES FOR THE OLD COMMITTEE")
+        tic = cnt()
+
+        for i in range(self.PARTIES):
+            shares1 = r[i]
+            shares2 = phy[i]
+            poly1 = self.sss.getPoly(enumerate(shares1, start=1))
+            poly2 = self.sss.getPoly(enumerate(shares2, start=1))
+            oCommit[i] = commit_to_poly(poly1, poly2, self.__setup)
+            polyEvals = self.__eval(poly1, poly2, x[i])
+            oProof[i] = [compute_proof_single(poly1, poly2, x[i], self.__setup), polyEvals[0], polyEvals[1],
+                         x[i]]
+        toc = cnt()
+        print(f"OLD COMMITTEE DONE in {(toc - tic)/self.PARTIES:0.6f} seconds per party")
+
+        nCommit = {}
+        nProof = {}
+        print("COMMITING TO R AND PHY AND THEIR WITNESSES FOR THE NEW COMMITTEE")
+        tic = cnt()
+
+        for i in range(self.PARTIES):
+            shares1 = rTilde[i]
+            shares2 = phyTilde[i]
+            poly1 = self.sss.getPoly(enumerate(shares1, start=1))
+            poly2 = self.sss.getPoly(enumerate(shares2, start=1))
+            nCommit[i] = commit_to_poly(poly1, poly2, self.__setup)
+            polyEvals = self.__eval(poly1, poly2, x[i])
+            nProof[i] = [compute_proof_single(poly1, poly2, x[i], self.__setup), polyEvals[0], polyEvals[1],
+                         x[i]]
+        toc = cnt()
+        print(f"NEW COMMITTEE DONE in {(toc - tic)/self.PARTIES:0.6f} seconds per party")
+
+        return r, phy, rTilde, phyTilde, oCommit, nCommit, oProof, nProof
+
+    def refresh(self, r, phy, s, z, rTilde, phyTilde):
         """
         Protocol 8 "Refresh"
         :param oldCommittee:
@@ -333,15 +382,44 @@ class Handoff:
         # Compute [z+phy] = [z] + [phy]
         # {Party : [u],[v],w,[s],[r],[z],[phy]}
         # {Party: (sr,zphy)}
+        print("PROTOCOL 8 REFRESH")
+        print("NOTE: I DONT HAVE COMMITMENTS AND WITNESSES HERE SO NO VALIDATIONS")
         sr = {}
-        for i in range(self.PARTIES):
-            sr[i] = (oldCommittee[i][3] + oldCommittee[i][4],oldCommittee[i][5] + oldCommittee[i][6])
+        zphy = {}
+        kingSR = []
+        kingZPHY = []
+        print("COMPUTING S+R AND Z+PHY. ALSO SENDING THEM TO P-KING")
+        tic = cnt()
 
+        for i in range(1, self.PARTIES + 1):
+            sr[i] = s[i] + r[i - 1][0]
+            zphy[i] = z[i] + phy[i - 1][0]
+            kingSR.append((i, s[i] + r[i - 1][0]))
+            kingZPHY.append((i, z[i] + phy[i - 1][0]))
+        toc = cnt()
+        print(f"COMPUTATION DONE in {(toc - tic)/self.PARTIES:0.6f} seconds per party")
+        print("RECONSTRUCT S+R AND Z+PHY")
+        srReconstruct = self.sss.reconstruct(kingSR)
+        zphyReconstruct = self.sss.reconstruct(kingZPHY)
 
-test = Handoff()
-old, new = test.distribution()
-print()
-# test.accusation()
+        s = {}
+        z = {}
+        print("COMPUTE S+R-R~ AND Z+PHY-PHY~")
+        for i in range(1, self.PARTIES + 1):
+            s[i] = srReconstruct - rTilde[i - 1][0]
+            z[i] = zphyReconstruct - phyTilde[i - 1][0]
+
+        return s, z
+
+    def r(self, shares):
+        print("RECONSTRUCT SECRET")
+        print("CLIENT DOES NOT VALIDATE SHARES")
+        return self.sss.reconstruct(shares)
+
+# test = Handoff()
+# old, new = test.distribution()
 # print()
-test.verification(old, new)
-# test.output(old,new)
+# # test.accusation()
+# # print()
+# test.verification(old, new)
+# r, phy, rTilde, phyTilde, oCommit, nCommit, oProof, nProof = test.output(old, new)
