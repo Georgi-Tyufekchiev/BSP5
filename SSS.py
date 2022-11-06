@@ -1,10 +1,11 @@
 from functools import reduce
+from time import perf_counter as cnt
+
 import numpy as np
-from numpy.polynomial import Polynomial
-from numpy.polynomial.polynomial import polyval
 from Crypto.Random import get_random_bytes as rng
 from Crypto.Util.number import bytes_to_long
-from time import perf_counter as cnt
+from numpy.polynomial import Polynomial
+from numpy.polynomial.polynomial import polyval
 
 
 def randNum():
@@ -81,6 +82,12 @@ class SSS:
         vShares = (self.splitSecret(v, uPoly[0]), self.splitSecret(v, uPoly[1]))
         return uPoly, vPoly, uShares, vShares
 
+    def sampleSharing(self):
+        elem = randNum()
+        poly = self.__polynomial(elem)
+        shares = self.splitSecret(elem, poly)
+        return shares, poly
+
     def __interpolate(self, x, y):
         """
         Lagrange's interpolation to recover secret
@@ -99,12 +106,30 @@ class SSS:
         f = [y[j] * _basis(j, k) for j in range(k)]
 
         return sum(f) % self.__p
-
+    # def test(self,shares):
+    #     M = len(x)
+    #     p = np.poly1d(0)
+    #     for j in range(M):
+    #         pt = np.polynomial.Polynomial(y[j])
+    #         for k in range(M):
+    #             if k == j:
+    #                 continue
+    #             fac = pow(x[j] - x[k], -1, self.__p)
+    #             pt *= np.polynomial.Polynomial([(-x[k]) * fac % self.__p, fac])
+    #             for coeff in range(len(pt.coef)):
+    #                 pt.coef[coeff] %= self.__p
+    #
+    #         p += pt
+    #         if j != 0:
+    #             for coeff in range(len(p.coef)):
+    #                 p.coef[coeff] %= self.__p
     def getPoly(self, shares):
+
+        shares = list(shares)
         x = [shares[i][0] for i in range(self.__k)]
         y = [shares[i][1] for i in range(self.__k)]
-        print(x)
-        print(y)
+        # print(x)
+        # print(y)
 
         def _polyAdd(poly1, poly2):
             coeff1 = poly1
@@ -128,9 +153,6 @@ class SSS:
             for m in range(k):
                 if m == j:
                     continue
-                print(x[j])
-                print(x[m])
-                print(x[j] - x[m])
                 fac = pow(x[j] - x[m], -1, self.__p)
                 l.append([(-x[m] * fac) % self.__p, fac])
 
@@ -154,7 +176,7 @@ class SSS:
         for poly in f[2:]:
             res = _polyAdd(poly, res)
         toc = cnt()
-        print(f"Poly {toc - tic:0.10f} seconds")
+        # print(f"Poly {toc - tic:0.10f} seconds")
 
         return res
 
@@ -169,7 +191,7 @@ if __name__ == "__main__":
     shares = sss.splitSecret(s)
     x = [shares[i][0] for i in range(8)]
     y = [shares[i][1] for i in range(8)]
-    p = sss.getPoly(shares)
+    p = sss.test(shares)
 
     print(p)
     # poly = sss.getPoly(x, y)
@@ -183,19 +205,4 @@ if __name__ == "__main__":
     # print(math.log(x, 2) / parties / 8)
     # print(rng(3))
 
-# M = len(x)
-#        p = np.poly1d()
-#        for j in range(M):
-#            pt = np.polynomial.Polynomial(y[j])
-#            for k in range(M):
-#                if k == j:
-#                    continue
-#                fac = pow(x[j] - x[k], -1, self.__p)
-#                pt *= np.polynomial.Polynomial([(-x[k]) * fac % self.__p, fac])
-#                for coeff in range(len(pt.coef)):
-#                    pt.coef[coeff] %= self.__p
-#
-#            p += pt
-#            if j != 0:
-#                for coeff in range(len(p.coef)):
-#                    p.coef[coeff] %= self.__p
+
