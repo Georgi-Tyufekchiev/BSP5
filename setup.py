@@ -1,8 +1,7 @@
-from time import perf_counter as cnt
+from operator import add
+from py_ecc import optimized_bls12_381 as curve
 
-from KZG import *
 from SSS import *
-from utils import *
 from hand_off import *
 
 
@@ -20,20 +19,36 @@ class Setup:
 
     @staticmethod
     def __eval(f, h, x):
+        """
+        Evaluate polynomials at point x
+        :param f: a list of poly coeff
+        :param h: a list of poly coeff
+        :param x: point to evaluate at
+        :return: evaluation of f and h
+        """
         fx = eval_poly_at(f, x)
         hx = eval_poly_at(h, x)
         return fx, hx
 
     def distribution(self):
+        """
+        Protocol 10 "Setup-Dist"
+        :return:
+        """
+        # a dict to store the sample sharings for each party
+        # also contains lists for the future distribution of shares
+        # the last list for witnesses
         committee = {}
         commit = {}
         print("PROTOCOL DISTRIBUTION:")
         tic = cnt()
 
         for i in range(self.PARTIES):
+            # Each sample sharing function will give a list of shares and the polynomial
             committee[i] = [self.sss.sampleSharing(), self.sss.sampleSharing(), [], [], []]
             poly1 = committee[i][0][1]
             poly2 = committee[i][1][1]
+            # compute the commitment to u and v for each party
             commit[i] = commit_to_poly(poly1, poly2, self.__setup)
         toc = cnt()
         print(f"SHARING + COMMITMENT done in {(toc - tic) / self.PARTIES:0.6f} seconds per party")
@@ -46,7 +61,10 @@ class Setup:
             uPoly = committee[i][0]
             vPoly = committee[i][1]
             for j in range(self.PARTIES):
+                # evaluate the polynomials of u and v at point x
                 polyEvals = self.__eval(uPoly[1], vPoly[1], x[j])
+                # compute the witness which is the tuple (proof, f(x), h(x), x)
+                # the witness has to be prepared by each party for each party
                 proof[i] = [compute_proof_single(uPoly[1], vPoly[1], x[j], self.__setup), polyEvals[0], polyEvals[1],
                             x[j]]
         toc = cnt()
@@ -54,6 +72,8 @@ class Setup:
         print("DISTRIBUTING SHARES AND WITNESSES")
         tic = cnt()
 
+        # Each party i will send their j-th share to the j-th party
+        # the j-th witness will be sent to the j-th party
         for i in range(self.PARTIES):
             uShares = committee[i][0][0]
             vShares = committee[i][1][0]
@@ -63,12 +83,17 @@ class Setup:
             for j in range(self.PARTIES):
                 committee[j][2].append(uShares[j])
                 committee[j][3].append(vShares[j])
+                # the witness is always the last element for each party
                 committee[j][-1].append(witness)
         toc = cnt()
         print(f"DONE IN {(toc - tic) / self.PARTIES:0.6f} seconds per party i")
         print("VALIDATING SHARES")
         tic = cnt()
 
+        # each party i will take the j-th witness and the j-th commit
+        # each party i will check the validity of the shares with those values
+        # if the validation is bad the party will prepare and accusation
+        # the accusation is the tuple (j-th party, witness, commitment
         for i in range(self.PARTIES):
             for j in range(self.PARTIES):
                 witness = committee[i][-1][j]
@@ -86,7 +111,7 @@ class Setup:
 
     def accusation(self):
         """
-        Protocol 4 "Accusation-Response"
+        Protocol 11 "Accusation-Response"
         """
         # Check if one of the validation lists contains an entry, which indicates an accusation is made
         # If it is empty then all parties are honest
@@ -114,7 +139,7 @@ class Setup:
 
     def verification(self, committee):
         """
-        Protocol 5 "Verification"
+        Protocol 12 "Verification"
         """
         print("PROTOCOL VERIFCATION")
 
@@ -122,7 +147,6 @@ class Setup:
             """
             Compute the shares of the polynomials F(X) = (mu + u*X)*X^(2i-2), H(X) = (vu + v*X)*X^(2*i-2)
             :param X: a scalar which was generated from the Challenge protocol i.e. the lambdas
-            :param i: The i-th party
             :param firstShares: the mu shares
             :param secondShares: the u shares
             :return: shares, the coeff of the polynomial
@@ -142,11 +166,11 @@ class Setup:
         def _compute(committeeD1, committeeD2, i, lambdas):
             """
             Provide the shares for the computation of the verification polynomials
-            :param committeeD1: The coupled sharing from the first distribution invocation
-            :param committeeD2: The coupled sharing from the second distribution invocation
+            :param committeeD1: The sampled sharings from the first distribution invocation
+            :param committeeD2: The sampled sharings from the second distribution invocation
             :param i: the i-th party
             :param lambdas: the scalars generated from the Challenge protocol
-            :return: shares
+            :return: shares, list of coeff
             """
             mu = committeeD2[i][2]
             u = committeeD1[i][2]
@@ -161,7 +185,7 @@ class Setup:
             Reconstruction of the F(X) and H(X)
             :param shares: list where the shares will be stored
             :param committee: the shares of the parties
-            :return: list of shares
+            :return: a reconstruction of either polynomial
             """
             for i in range(1, self.THRESHOLD + 2):
                 shares[i] = (i, committee[i][0])
@@ -177,10 +201,10 @@ class Setup:
             return commit_to_poly(u, v, self.__setup), commit_to_poly(mu, vu, self.__setup)
 
         # Invoke the distribution protocol to create the mu and vu coupled sharing
-        # { Party : u,v,shares1,shares2,w}
         print("EXECUTE SECOND DISTRIBUTION")
         committeeD2 = self.distribution()
         print("EXECUTE CHALLENGE")
+        # the challenge protocol will produce the lambdas
         lambdas = challenge(self.PARTIES)
         newCommittee = {}
         #  TODO: MAKE HASH
@@ -189,12 +213,10 @@ class Setup:
         tic = cnt()
         print("COMPUTE F(X) AND H(X)")
         for i in range(self.PARTIES):
-            # Create the F(X) and H(X) polynomials
-            # Compute the witnesses for those polynomials
-            # For the new/old committee create the dictionary {party : (F(X),H(X),w}
+            # Create the shares for F(X) and H(X)
             fx, hx = _compute(committee, committeeD2, i, lambdas)
-            newCommittee[i] = (fx[0], hx[0],
-                               compute_proof_single(fx[1], hx[1], x, self.__setup))
+            newCommittee[i] = (fx[0], hx[0])
+
 
         toc = cnt()
         print(f"Compute F(X) and H(X) with their w in {(toc - tic) / self.PARTIES:0.6f} seconds per party")
@@ -229,18 +251,21 @@ class Setup:
 
     def output(self, committee):
         """
-        Protocol 7 "Output"
+        Protocol 14 "Output"
         :return:
         """
         print("STARTING PROTOCOL OUTPUT")
 
+        # make a n x n-t Vandermonde matrix
         vander = vanderMatrix(self.PARTIES, self.THRESHOLD)
         r = {}
         phy = {}
         tic = cnt()
 
         for i in range(self.PARTIES):
+            # compute the vector ([r1]...[r_n-t])
             r[i] = computeVanderElem(vander, committee[i][2])
+            # compute the vector ([phy1]...[phy_n-t])
             phy[i] = computeVanderElem(vander, committee[i][3])
         toc = cnt()
         print(f"COMPUTED VANDERMONDE ELEMENTS [r] [phy] in {(toc - tic) / self.PARTIES:0.6f} seconds per party")
@@ -248,62 +273,112 @@ class Setup:
         commit = {}
         proof = {}
         print("COMMITING TO R AND PHY AND THEIR WITNESSES")
+        x = [i for i in range(100, 110)]
         tic = cnt()
 
-        x = [i for i in range(100, 110)]
         for i in range(self.PARTIES):
-            shares1 = r[i]
-            shares2 = phy[i]
-            poly1 = self.sss.getPoly(enumerate(shares1, start=1))
-            poly2 = self.sss.getPoly(enumerate(shares2, start=1))
-            commit[i] = commit_to_poly(poly1, poly2, self.__setup)
-            polyEvals = self.__eval(poly1, poly2, x[i])
-            proof[i] = [compute_proof_single(poly1, poly2, x[i], self.__setup), polyEvals[0], polyEvals[1],
-                        x[i]]
+            uShares = committee[i][2]
+            vShares = committee[i][3]
+            commitments = []
+            witnesses = []
+            for j in range(self.PARTIES):
+                # Compute the commitment of each r and phy for each party
+                # Compute the witness for each r and phy for each party
+                ui = [uShares[j][1]] * (self.PARTIES - self.THRESHOLD)
+                vi = [vShares[j][1]] * (self.PARTIES - self.THRESHOLD)
+                commitment = commit_to_poly(ui, vi, self.__setup)
+                polyEvals = self.__eval(ui, vi, x[j])
+                witness = compute_proof_single(ui, vi, x[j], self.__setup)
+                commitments.append(commitment)
+                witnesses.append((witness, polyEvals[0], polyEvals[1], x[j]))
+
+            commit[i] = commitments
+            proof[i] = witnesses
+
         toc = cnt()
-        print(f"OLD COMMITTEE DONE in {(toc - tic) / self.PARTIES:0.6f} seconds per party")
+        print(f" COMMITTEE DONE in {(toc - tic) / self.PARTIES:0.6f} seconds per party")
 
         return r, phy, commit, proof
 
     def refresh(self, r, phy, commitments, proof):
         """
-        Protocol 8 "Refresh"
-        :param oldCommittee:
-        :param newCommittee:
+        Protocol 15 "Fresh"
+        :param r: vector of r shares
+        :param phy: vector of phy shares
+        :param commitments: dictionary which has all the commitments for each party
+        :param proof: dictionary which has all the witnesses for each party
         :return:
         """
         print("PROTCOL FRESH SETUP")
         tic = cnt()
 
         def _client():
+            """
+            This function simulates the operations of the client
+            :return: s+r, z+phy, reconstruction of r
+            """
             print("CLIENT RECEIVES SHARES AND VALIDATES T+1 OF THEM")
+            # the client will receive n shares of r
+            # they will take the first t+1 shares that pass the validation
+            # for now we assume the parties are honest, so we know the first t+1 are already valid
             for j in range(self.THRESHOLD + 1):
-                w, fx, hx, xi = proof[j]
+                w, fx, hx, xi = proof[j][0]
 
-                if not check_proof_single(commitments[j], w, xi, fx, hx, self.__setup):
+                if not check_proof_single(commitments[j][0], w, xi, fx, hx, self.__setup):
                     print("Validation BAD FOR OLD %d" % (j))
-                    self.validations.append((j, proof[j], commitments[j]))
+                    self.validations.append((j, proof[j][0], commitments[j][0]))
 
+            # take out the sharing value for r from the tuple (x,y)
             rShares = [r[i][0] for i in range(len(r))]
+            # take out the sharing value for phy from the tuple (x,y)
             phyShares = [phy[i][0] for i in range(len(phy))]
             print("CLIENT RECONSTRUCTS R AND PHY")
-            rReconstruct = self.sss.reconstruct(list(enumerate(rShares, start=1)))
-            phyReconstruct = self.sss.reconstruct(list(enumerate(phyShares, start=1)))
-            z = randNum()
-            secret = 10
+            # Reconstruct the ull polynomials or r and phy
+            rReconstruct = self.sss.getPoly(list(enumerate(rShares, start=1)))
+            phyReconstruct = self.sss.getPoly(list(enumerate(phyShares, start=1)))
+            # sample a random r and its polynomial
+            z = [randNum()] + [bytes_to_long(rng(8)) for _ in range(1, self.THRESHOLD)]
+            # take a random secret value e.g and make a polynomial out of it
+            secret = [10] + [bytes_to_long(rng(8)) for _ in range(1, self.THRESHOLD)]
             print("COMPUTE S+R AND Z+PHY")
-            sr = secret + rReconstruct
-            zphy = z + phyReconstruct
+            # add the polynomials s+r
+            sr = list(map(add, rReconstruct, secret))
+            # add the polynomials z+phy
+            zphy = list(map(add, phyReconstruct, z))
             return sr, zphy, rReconstruct
 
         sr, zphy, rRec = _client()
+
+        # since s+r is public, the same commitment will be used for all parties
+        commitment = commit_to_poly(sr, zphy, self.__setup)
+        x = [i for i in range(100, 110)]
+
+        partyCommitments = {}
+        proofs = {}
+
+        # all parties compute the proof for their s+r
+        # each party will take the witness for the [r] and [phy] from the protocol 14
+        # each party will take the commitment for the [r] and [phy] from protocol 14
+        # The witness is the ratio w(s+r,z+phy)/w([r],[phy]) = w1 * w2^(-1) = w1 + neg(w2)
+        # The same is the done for the commitments
+        # we do this because the witness and the commitment is an elliptic curve point (x,y,z)
+        for i in range(self.PARTIES):
+            publicSharingWitness = compute_proof_single(sr, zphy, x[i], self.__setup)
+            r_phyWitness = proof[i][0][0]
+            proofs[i] = curve.add(publicSharingWitness, curve.neg(r_phyWitness))
+            r_phyCommitment = commitments[i][0]
+            partyCommitments[i] = curve.add(commitment, curve.neg(r_phyCommitment))
+
         sShares = {}
         zShares = {}
         print("EACH PARTY COMPUTES S+R-R AND Z+PHY-PHY")
+        # each party will compute s+r - [r]
+        # each party will compute z+phy - [phy]
         for i in range(1, self.PARTIES + 1):
-            sShares[i] = sr - r[i - 1][0]
-            zShares[i] = zphy - phy[i - 1][0]
+            sShares[i] = sr[0] - r[i - 1][0]
+            zShares[i] = zphy[0] - phy[i - 1][0]
         toc = cnt()
+
         print(f"FINISH PROTOCOL in {(toc - tic):0.6f} seconds")
 
         return sShares, zShares, rRec
