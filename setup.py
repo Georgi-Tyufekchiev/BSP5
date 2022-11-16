@@ -94,17 +94,17 @@ class Setup:
         # each party i will check the validity of the shares with those values
         # if the validation is bad the party will prepare and accusation
         # the accusation is the tuple (j-th party, witness, commitment
-        for i in range(self.PARTIES):
-            for j in range(self.PARTIES):
-                witness = committee[i][-1][j]
-                w, fx, hx, xi = witness
-                oCommit = commit[j]
-
-                if not check_proof_single(oCommit, w, xi, fx, hx, self.__setup):
-                    print("Validation BAD FOR OLD %d %d" % (i, j))
-                    self.validations.append((j, witness, oCommit))
-        toc = cnt()
-        print(f"VALIDATION IN {(toc - tic) / self.PARTIES:0.6f} seconds per party i")
+        # for i in range(self.PARTIES):
+        #     for j in range(self.PARTIES):
+        #         witness = committee[i][-1][j]
+        #         w, fx, hx, xi = witness
+        #         oCommit = commit[j]
+        #
+        #         if not check_proof_single(oCommit, w, xi, fx, hx, self.__setup):
+        #             print("Validation BAD FOR OLD %d %d" % (i, j))
+        #             self.validations.append((j, witness, oCommit))
+        # toc = cnt()
+        # print(f"VALIDATION IN {(toc - tic) / self.PARTIES:0.6f} seconds per party i")
 
         # { Party : u,v,shares1,shares2,w}
         return committee
@@ -273,7 +273,7 @@ class Setup:
         commit = {}
         proof = {}
         print("COMMITING TO R AND PHY AND THEIR WITNESSES")
-        x = [i for i in range(100, 110)]
+        x = [i for i in range(1, 11)]
         tic = cnt()
 
         for i in range(self.PARTIES):
@@ -284,8 +284,8 @@ class Setup:
             for j in range(self.PARTIES):
                 # Compute the commitment of each r and phy for each party
                 # Compute the witness for each r and phy for each party
-                ui = [uShares[j][1]] * (self.PARTIES - self.THRESHOLD)
-                vi = [vShares[j][1]] * (self.PARTIES - self.THRESHOLD)
+                ui = [uShares[j][1]] * self.THRESHOLD
+                vi = [vShares[j][1]] * self.THRESHOLD
                 commitment = commit_to_poly(ui, vi, self.__setup)
                 polyEvals = self.__eval(ui, vi, x[j])
                 witness = compute_proof_single(ui, vi, x[j], self.__setup)
