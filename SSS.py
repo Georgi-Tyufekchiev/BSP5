@@ -1,7 +1,5 @@
 from functools import reduce
-from time import perf_counter as cnt
 
-import numpy as np
 from Crypto.Random import get_random_bytes as rng
 from Crypto.Util.number import bytes_to_long
 from numpy.polynomial import Polynomial
@@ -106,28 +104,13 @@ class SSS:
         f = [y[j] * _basis(j, k) for j in range(k)]
 
         return sum(f) % self.__p
-    # def test(self,shares):
-    #     M = len(x)
-    #     p = np.poly1d(0)
-    #     for j in range(M):
-    #         pt = np.polynomial.Polynomial(y[j])
-    #         for k in range(M):
-    #             if k == j:
-    #                 continue
-    #             fac = pow(x[j] - x[k], -1, self.__p)
-    #             pt *= np.polynomial.Polynomial([(-x[k]) * fac % self.__p, fac])
-    #             for coeff in range(len(pt.coef)):
-    #                 pt.coef[coeff] %= self.__p
-    #
-    #         p += pt
-    #         if j != 0:
-    #             for coeff in range(len(p.coef)):
-    #                 p.coef[coeff] %= self.__p
+
     def getPoly(self, shares):
 
         shares = list(shares)
         x = [shares[i][0] for i in range(self.__k)]
         y = [shares[i][1] for i in range(self.__k)]
+
         # print(x)
         # print(y)
 
@@ -161,8 +144,6 @@ class SSS:
                 p = _polyMul(p, poly)
             return p
 
-        tic = cnt()
-
         k = len(x)
         f = []
         for j in range(k):
@@ -175,34 +156,9 @@ class SSS:
         res = _polyAdd(f[0], f[1])
         for poly in f[2:]:
             res = _polyAdd(poly, res)
-        toc = cnt()
-        # print(f"Poly {toc - tic:0.10f} seconds")
 
         return res
 
 
 if __name__ == "__main__":
-    # Assume 10 parties with t = 4
-    parties = 10
-    t = 4
-    # ui = [randNum() for i in range(parties)]
-    sss = SSS(parties, t)
-    s = 100
-    shares = sss.splitSecret(s)
-    x = [shares[i][0] for i in range(8)]
-    y = [shares[i][1] for i in range(8)]
-    p = sss.test(shares)
-
-    print(p)
-    # poly = sss.getPoly(x, y)
-    # uiShares = [sss.splitSecret(u) for u in ui]
-    # ui_iShare = [uiShares[i][i][1] for i in range(parties)]
-    # vander = vanderMatrix(parties, t)
-    # ri = computeRandElem(vander, ui_iShare)
-    # print(ri)
-    # x = 2 ** 512 - 1
-    # print(math.log(x, 2))
-    # print(math.log(x, 2) / parties / 8)
-    # print(rng(3))
-
-
+    pass
