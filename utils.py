@@ -12,9 +12,9 @@ def vanderMatrix(N, t):
     :param t: Threshold
     :return: vander matrix
     """
-    x = np.array([n for n in range(N)])
+    x = np.array([n for n in range(1, N+1)])
     n = N - t
-    return np.vander(x, n)
+    return np.vander(x, n, increasing=True)
 
 
 def computeVanderElem(vander, shares):
