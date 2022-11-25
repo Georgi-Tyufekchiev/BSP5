@@ -1,3 +1,4 @@
+import sys
 from operator import add
 from py_ecc import optimized_bls12_381 as curve
 
@@ -54,19 +55,23 @@ class Setup:
         print(f"SHARING + COMMITMENT done in {(toc - tic) / self.PARTIES:0.6f} seconds per party")
 
         proof = {}
-        x = [i for i in range(100, 110)]
+        x = {}
+        for i in range(self.PARTIES):
+            hashing = fsh(self.__setup, commit[i])
+            x[i] = [int.from_bytes(hashing.read(j + 1), byteorder='big') for j in range(self.PARTIES)]
         tic = cnt()
 
         for i in range(self.PARTIES):
             uPoly = committee[i][0]
             vPoly = committee[i][1]
+            xi = x[i]
             for j in range(self.PARTIES):
                 # evaluate the polynomials of u and v at point x
-                polyEvals = self.__eval(uPoly[1], vPoly[1], x[j])
+                polyEvals = self.__eval(uPoly[1], vPoly[1], xi[j])
                 # compute the witness which is the tuple (proof, f(x), h(x), x)
                 # the witness has to be prepared by each party for each party
-                proof[i] = [compute_proof_single(uPoly[1], vPoly[1], x[j], self.__setup), polyEvals[0], polyEvals[1],
-                            x[j]]
+                proof[i] = [compute_proof_single(uPoly[1], vPoly[1], xi[j], self.__setup), polyEvals[0], polyEvals[1],
+                            xi[j]]
         toc = cnt()
         print(f"PROOFS DONE IN {(toc - tic) / self.PARTIES:0.6f} seconds per party")
         print("DISTRIBUTING SHARES AND WITNESSES")
@@ -94,17 +99,18 @@ class Setup:
         # each party i will check the validity of the shares with those values
         # if the validation is bad the party will prepare and accusation
         # the accusation is the tuple (j-th party, witness, commitment
-        # for i in range(self.PARTIES):
-        #     for j in range(self.PARTIES):
-        #         witness = committee[i][-1][j]
-        #         w, fx, hx, xi = witness
-        #         oCommit = commit[j]
-        #
-        #         if not check_proof_single(oCommit, w, xi, fx, hx, self.__setup):
-        #             print("Validation BAD FOR OLD %d %d" % (i, j))
-        #             self.validations.append((j, witness, oCommit))
-        # toc = cnt()
-        # print(f"VALIDATION IN {(toc - tic) / self.PARTIES:0.6f} seconds per party i")
+
+        for i in range(self.PARTIES):
+            for j in range(self.PARTIES):
+                witness = committee[i][-1][j]
+                w, fx, hx, xi = witness
+                oCommit = commit[j]
+
+                if not check_proof_single(oCommit, w, xi, fx, hx, self.__setup):
+                    print("Validation BAD FOR OLD %d %d" % (i, j))
+                    self.validations.append((j, witness, oCommit))
+        toc = cnt()
+        print(f"VALIDATION IN {(toc - tic) / self.PARTIES:0.6f} seconds per party i")
 
         # { Party : u,v,shares1,shares2,w}
         return committee
@@ -215,8 +221,8 @@ class Setup:
         for i in range(self.PARTIES):
             # Create the shares for F(X) and H(X)
             fx, hx = _compute(committee, committeeD2, i, lambdas)
-            newCommittee[i] = (fx[0], hx[0])
-
+            newCommittee[i] = (fx[0], hx[0],
+                               compute_proof_single(fx[1], hx[1], x, self.__setup))
 
         toc = cnt()
         print(f"Compute F(X) and H(X) with their w in {(toc - tic) / self.PARTIES:0.6f} seconds per party")
@@ -272,8 +278,9 @@ class Setup:
 
         commit = {}
         proof = {}
+        # poly = {}
         print("COMMITING TO R AND PHY AND THEIR WITNESSES")
-        x = [i for i in range(1, 11)]
+        x = [i for i in range(100, 110)]
         tic = cnt()
 
         for i in range(self.PARTIES):
@@ -291,6 +298,7 @@ class Setup:
                 witness = compute_proof_single(ui, vi, x[j], self.__setup)
                 commitments.append(commitment)
                 witnesses.append((witness, polyEvals[0], polyEvals[1], x[j]))
+                break
 
             commit[i] = commitments
             proof[i] = witnesses
@@ -325,7 +333,7 @@ class Setup:
                 w, fx, hx, xi = proof[j][0]
 
                 if not check_proof_single(commitments[j][0], w, xi, fx, hx, self.__setup):
-                    print("Validation BAD FOR OLD %d" % (j))
+                    print("Validation BAD FOR OLD %d" % j)
                     self.validations.append((j, proof[j][0], commitments[j][0]))
 
             # take out the sharing value for r from the tuple (x,y)
@@ -345,14 +353,17 @@ class Setup:
             sr = list(map(add, rReconstruct, secret))
             # add the polynomials z+phy
             zphy = list(map(add, phyReconstruct, z))
+
             return sr, zphy, rReconstruct
 
         sr, zphy, rRec = _client()
 
         # since s+r is public, the same commitment will be used for all parties
         commitment = commit_to_poly(sr, zphy, self.__setup)
-        x = [i for i in range(100, 110)]
+        hashing = fsh(self.__setup, commitment)
 
+        # x = [int.from_bytes(hashing.read(j + 1), byteorder='big') for j in range(self.PARTIES)]
+        x = [100 for _ in range(10)]
         partyCommitments = {}
         proofs = {}
 
@@ -362,10 +373,13 @@ class Setup:
         # The witness is the ratio w(s+r,z+phy)/w([r],[phy]) = w1 * w2^(-1) = w1 + neg(w2)
         # The same is the done for the commitments
         # we do this because the witness and the commitment is an elliptic curve point (x,y,z)
+        srEval, zphyEval = self.__eval(sr, zphy, 100)
+        publicSharingWitness = compute_proof_single(sr, zphy, 100, self.__setup)
+
         for i in range(self.PARTIES):
-            publicSharingWitness = compute_proof_single(sr, zphy, x[i], self.__setup)
-            r_phyWitness = proof[i][0][0]
-            proofs[i] = curve.add(publicSharingWitness, curve.neg(r_phyWitness))
+            r_phyWitness, rEval, phyEval, b = proof[i][0]
+            proofs[i] = [curve.add(publicSharingWitness, curve.neg(r_phyWitness)), x[i], srEval - rEval,
+                         zphyEval - phyEval]
             r_phyCommitment = commitments[i][0]
             partyCommitments[i] = curve.add(commitment, curve.neg(r_phyCommitment))
 
@@ -381,11 +395,7 @@ class Setup:
 
         print(f"FINISH PROTOCOL in {(toc - tic):0.6f} seconds")
 
-        return sShares, zShares, rRec
-
-    def r(self, shares):
-        s = self.sss.reconstruct(shares)
-        return s
+        return sShares, zShares, rRec, partyCommitments, proofs
 
 
 if __name__ == "__main__":
@@ -401,7 +411,7 @@ if __name__ == "__main__":
     print()
     r, phy, commit, proof = test.output(c)
     print()
-    s1, z1, rRec = test.refresh(r, phy, commit, proof)
+    s1, z1, rRec, commitments, proofs = test.refresh(r, phy, commit, proof)
     print()
     # res = list(s1.items())
     # print(test.r(res))
@@ -420,8 +430,8 @@ if __name__ == "__main__":
     r, phy, rTilde, phyTilde, oCommit, nCommit, oProof, nProof = final.output(o, c)
     print()
 
-    s, z = final.refresh(r, phy, s1, z1, rTilde, phyTilde)
+    s, z, commitment, proof = final.refresh(r, phy, s1, z1, rTilde, phyTilde, proofs, commitments, oProof, oCommit)
     print()
 
     res = list(s.items())
-    print(final.r(res))
+    print(final.reconstruction(res, commitment, proof))
