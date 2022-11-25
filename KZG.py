@@ -212,13 +212,23 @@ def check_proof_single(commitment, proof, x, y, y_r, setup):
     # pairing_check *= b.pairing(s_minus_x, proof, False)
     # pairing = b.final_exponentiate(pairing_check)
 
-    g_f = b.multiply(b.neg(b.G1), y)
-    h_r = b.multiply(b.neg(b.H), y_r)
+    if y < 0 and y_r < 0:
+        g_f = b.multiply(b.G1, y * -1)
+        h_r = b.multiply(b.H, y_r * - 1)
+    elif y < 0:
+        g_f = b.multiply(b.G1, y * -1)
+        h_r = b.multiply(b.neg(b.H), y_r)
+    elif y_r < 0:
+        g_f = b.multiply(b.neg(b.G1), y)
+        h_r = b.multiply(b.H, y_r * - 1)
+    else:
+        g_f = b.multiply(b.neg(b.G1), y)
+        h_r = b.multiply(b.neg(b.H), y_r)
+
     commitment_minus_y = b.add(commitment, b.add(g_f, h_r))
     pairing_check = b.pairing(b.G2, b.neg(commitment_minus_y), False)
     pairing_check *= b.pairing(s_minus_x, proof, False)
     pairing = b.final_exponentiate(pairing_check)
-
     return pairing == b.FQ12.one()
 
 
@@ -282,24 +292,40 @@ if __name__ == "__main__":
     f = [1, 2, 3, 4]
     r = [7, 3, 6, 2]
 
+    f1 = [1, 2, 3, 4]
+    r1 = [7, 3, 6, 2]
+
     n = len(f)
 
     setup = generate_setup(1927409816240961209460912649124, n)
 
-    commitment = commit_to_poly(f, r, setup)
-    proof = compute_proof_single(f, r, 17, setup)
-    value = eval_poly_at(f, 17)
-    value_r = eval_poly_at(r, 17)
-    assert check_proof_single(commitment, proof, 17, value, value_r, setup)
-    print("Single point check passed")
+    commitment2 = commit_to_poly(f1, r1, setup)
+    proof2 = compute_proof_single(f1, r1, 17, setup)
+    value2 = eval_poly_at(f1, 17)
+    value2_r = eval_poly_at(r1, 17)
+    # print(commitment)
+    commitment1 = commit_to_poly(f, r, setup)
+    proof1 = compute_proof_single(f, r, 17, setup)
+    value1 = eval_poly_at(f, 17)
+    value1_r = eval_poly_at(r, 17)
+    w = b.add(proof1, b.neg(proof2))
+    # print(check(commitment1, commitment2, proof1, proof2, 0, 0, value1, value2, value1_r, value2, setup))
 
-    root_of_unity = get_root_of_unity(4)
-    x = 5431
-    coset = [x * pow(root_of_unity, i, MODULUS) for i in range(4)]
-    ys = [eval_poly_at(f, z) for z in coset]
-    ys_r = [eval_poly_at(r, z) for z in coset]
-    proof = compute_proof_multi(f, r, x, 4, setup)
-    assert check_proof_multi(commitment, proof, x, ys, ys_r, setup)
-    print("Coset check passed")
+    # assert check(commitment1, commitment2, w, 17, 17, value1, value2, value1_r, value2_r, setup)
+    # print(check_proof_single(commitment2, proof2, 18, value2, value2_r, setup))
+    print(check_proof_single(b.add(commitment1, commitment2), b.add(proof1, proof2), 17, value2 + value1,
+                             value2_r + value1_r, setup))
+    # print(check_proof_single(b.add(commitment1, b.neg(commitment2)), b.add(proof1, b.neg(proof2)),  17, value2 - value1,
+    # value2_r - value1_r, setup))
+    # print(check_proof_single(commitment1, proof1, 17, value1, value1_r, setup))
 
-
+    # print("Single point check passed")
+    #
+    # root_of_unity = get_root_of_unity(4)
+    # x = 5431
+    # coset = [x * pow(root_of_unity, i, MODULUS) for i in range(10)]
+    # ys = [eval_poly_at(f, z) for z in coset]
+    # ys_r = [eval_poly_at(r, z) for z in coset]
+    # proof = compute_proof_multi(f, r, x, 4, setup)
+    # assert check_proof_multi(commitment, proof, x, ys, ys_r, setup)
+    # print("Coset check passed")
