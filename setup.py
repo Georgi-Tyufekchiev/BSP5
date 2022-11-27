@@ -1,9 +1,9 @@
-import sys
+from multiprocessing.pool import ThreadPool
 from operator import add
-from py_ecc import optimized_bls12_381 as curve
 
 from SSS import *
 from hand_off import *
+import queue
 
 
 class Setup:
@@ -13,6 +13,10 @@ class Setup:
         """
         Initialise the (n,k) Shamir secret sharing scheme along with the Trusted Setup, which will create the PK
         """
+        self.distr = 0
+        self.ver = 0
+        self.out = 0
+        self.ref = 0
         self.PARTIES = 10
         self.THRESHOLD = 4
         self.sss = SSS(self.PARTIES, self.THRESHOLD)
@@ -30,6 +34,28 @@ class Setup:
         fx = eval_poly_at(f, x)
         hx = eval_poly_at(h, x)
         return fx, hx
+
+    def computeWitness(self, committee, i, x):
+        uPoly = committee[i][0]
+        vPoly = committee[i][1]
+        xi = x[i]
+        for j in range(self.PARTIES):
+            # evaluate the polynomials of u and v at point x
+            polyEvals = self.__eval(uPoly[1], vPoly[1], xi[j])
+            # compute the witness which is the tuple (proof, f(x), h(x), x)
+            # the witness has to be prepared by each party for each party
+        return [i, compute_proof_single(uPoly[1], vPoly[1], xi[j], self.__setup), polyEvals[0], polyEvals[1],
+                xi[j]]
+
+    def validateShares(self, committee, commit, i):
+        for j in range(self.PARTIES):
+            witness = committee[i][-1][j]
+            w, fx, hx, xi = witness
+            oCommit = commit[j]
+
+            if not check_proof_single(oCommit, w, xi, fx, hx, self.__setup):
+                print("Validation BAD FOR OLD %d %d" % (i, j), flush=True)
+                self.validations.append((j, witness, oCommit))
 
     def distribution(self):
         """
@@ -53,6 +79,7 @@ class Setup:
             commit[i] = commit_to_poly(poly1, poly2, self.__setup)
         toc = cnt()
         print(f"SHARING + COMMITMENT done in {(toc - tic) / self.PARTIES:0.6f} seconds per party")
+        self.distr += (toc - tic)
 
         proof = {}
         x = {}
@@ -65,16 +92,26 @@ class Setup:
             uPoly = committee[i][0]
             vPoly = committee[i][1]
             xi = x[i]
+            w = []
             for j in range(self.PARTIES):
                 # evaluate the polynomials of u and v at point x
                 polyEvals = self.__eval(uPoly[1], vPoly[1], xi[j])
                 # compute the witness which is the tuple (proof, f(x), h(x), x)
                 # the witness has to be prepared by each party for each party
-                proof[i] = [compute_proof_single(uPoly[1], vPoly[1], xi[j], self.__setup), polyEvals[0], polyEvals[1],
-                            xi[j]]
+                w.append([compute_proof_single(uPoly[1], vPoly[1], xi[j], self.__setup), polyEvals[0], polyEvals[1],
+                          xi[j]])
+            proof[i] = w
+
+        # with Pool() as p:
+        #     items = [(committee, i, x) for i in range(self.PARTIES)]
+        #     for result in p.starmap(self.computeWitness, items):
+        #         i, w, p1, p2, xi = result
+        #         proof[i] = [w, p1, p2, xi]
+
         toc = cnt()
         print(f"PROOFS DONE IN {(toc - tic) / self.PARTIES:0.6f} seconds per party")
         print("DISTRIBUTING SHARES AND WITNESSES")
+        self.distr += (toc - tic)
         tic = cnt()
 
         # Each party i will send their j-th share to the j-th party
@@ -89,17 +126,18 @@ class Setup:
                 committee[j][2].append(uShares[j])
                 committee[j][3].append(vShares[j])
                 # the witness is always the last element for each party
-                committee[j][-1].append(witness)
+                committee[j][-1].append(witness[j])
         toc = cnt()
         print(f"DONE IN {(toc - tic) / self.PARTIES:0.6f} seconds per party i")
         print("VALIDATING SHARES")
+        self.distr += (toc - tic)
+
         tic = cnt()
 
         # each party i will take the j-th witness and the j-th commit
         # each party i will check the validity of the shares with those values
         # if the validation is bad the party will prepare and accusation
         # the accusation is the tuple (j-th party, witness, commitment
-
         for i in range(self.PARTIES):
             for j in range(self.PARTIES):
                 witness = committee[i][-1][j]
@@ -109,8 +147,13 @@ class Setup:
                 if not check_proof_single(oCommit, w, xi, fx, hx, self.__setup):
                     print("Validation BAD FOR OLD %d %d" % (i, j))
                     self.validations.append((j, witness, oCommit))
+        # with Pool() as p:
+        #     items = [(committee, commit, i) for i in range(self.PARTIES)]
+        #     p.starmap(self.validateShares, items)
+
         toc = cnt()
-        print(f"VALIDATION IN {(toc - tic) / self.PARTIES:0.6f} seconds per party i")
+        print(f"VALIDATION IN {(toc - tic) / self.PARTIES:0.6f} seconds per party i", flush=True)
+        self.distr += (toc - tic)
 
         # { Party : u,v,shares1,shares2,w}
         return committee
@@ -214,7 +257,8 @@ class Setup:
         lambdas = challenge(self.PARTIES)
         newCommittee = {}
         #  TODO: MAKE HASH
-        x = 5431
+        hashing = fsh(self.__setup, self.__setup[1][2])
+        x = [int.from_bytes(hashing.read(j + 1), byteorder='big') for j in range(self.PARTIES)]
 
         tic = cnt()
         print("COMPUTE F(X) AND H(X)")
@@ -222,9 +266,10 @@ class Setup:
             # Create the shares for F(X) and H(X)
             fx, hx = _compute(committee, committeeD2, i, lambdas)
             newCommittee[i] = (fx[0], hx[0],
-                               compute_proof_single(fx[1], hx[1], x, self.__setup))
+                               compute_proof_single(fx[1], hx[1], x[i], self.__setup))
 
         toc = cnt()
+        self.ver += (toc - tic)
         print(f"Compute F(X) and H(X) with their w in {(toc - tic) / self.PARTIES:0.6f} seconds per party")
 
         oCommit = {}
@@ -245,6 +290,7 @@ class Setup:
         f = _reconstruction(shares, newCommittee)
         h = _reconstruction(shares, newCommittee)
         toc = cnt()
+        self.ver += (toc - tic)
 
         checkOldCommitments = {}
         # for i in range(self.PARTIES):
@@ -275,12 +321,12 @@ class Setup:
             phy[i] = computeVanderElem(vander, committee[i][3])
         toc = cnt()
         print(f"COMPUTED VANDERMONDE ELEMENTS [r] [phy] in {(toc - tic) / self.PARTIES:0.6f} seconds per party")
+        self.out += (toc - tic)
 
         commit = {}
         proof = {}
         # poly = {}
         print("COMMITING TO R AND PHY AND THEIR WITNESSES")
-        x = [i for i in range(100, 110)]
         tic = cnt()
 
         for i in range(self.PARTIES):
@@ -294,10 +340,12 @@ class Setup:
                 ui = [uShares[j][1]] * self.THRESHOLD
                 vi = [vShares[j][1]] * self.THRESHOLD
                 commitment = commit_to_poly(ui, vi, self.__setup)
-                polyEvals = self.__eval(ui, vi, x[j])
-                witness = compute_proof_single(ui, vi, x[j], self.__setup)
+                hashing = fsh(self.__setup, commitment)
+                x = int.from_bytes(hashing.read(4), byteorder='big')
+                polyEvals = self.__eval(ui, vi, x)
+                witness = compute_proof_single(ui, vi, x, self.__setup)
                 commitments.append(commitment)
-                witnesses.append((witness, polyEvals[0], polyEvals[1], x[j]))
+                witnesses.append((witness, polyEvals[0], polyEvals[1], x))
                 break
 
             commit[i] = commitments
@@ -305,8 +353,16 @@ class Setup:
 
         toc = cnt()
         print(f" COMMITTEE DONE in {(toc - tic) / self.PARTIES:0.6f} seconds per party")
+        self.out += (toc - tic)
 
         return r, phy, commit, proof
+
+    def validate(self, proof, commitments, j):
+        w, fx, hx, xi = proof[j][0]
+
+        if not check_proof_single(commitments[j][0], w, xi, fx, hx, self.__setup):
+            print("Validation BAD FOR OLD %d" % j)
+            self.validations.append((j, proof[j][0], commitments[j][0]))
 
     def refresh(self, r, phy, commitments, proof):
         """
@@ -318,7 +374,6 @@ class Setup:
         :return:
         """
         print("PROTCOL FRESH SETUP")
-        tic = cnt()
 
         def _client():
             """
@@ -335,6 +390,10 @@ class Setup:
                 if not check_proof_single(commitments[j][0], w, xi, fx, hx, self.__setup):
                     print("Validation BAD FOR OLD %d" % j)
                     self.validations.append((j, proof[j][0], commitments[j][0]))
+
+            # with Pool() as p:
+            #     items = [(proof, commitments, j) for j in range(self.PARTIES)]
+            #     p.starmap(self.validate, items)
 
             # take out the sharing value for r from the tuple (x,y)
             rShares = [r[i][0] for i in range(len(r))]
@@ -356,14 +415,16 @@ class Setup:
 
             return sr, zphy, rReconstruct
 
+        tic = cnt()
         sr, zphy, rRec = _client()
-
+        toc = cnt()
+        print(f"CLIENT DONE {(toc - tic) / self.PARTIES:0.6f} seconds ")
+        self.ref += (toc - tic)
         # since s+r is public, the same commitment will be used for all parties
         commitment = commit_to_poly(sr, zphy, self.__setup)
         hashing = fsh(self.__setup, commitment)
 
         # x = [int.from_bytes(hashing.read(j + 1), byteorder='big') for j in range(self.PARTIES)]
-        x = [100 for _ in range(10)]
         partyCommitments = {}
         proofs = {}
 
@@ -373,12 +434,13 @@ class Setup:
         # The witness is the ratio w(s+r,z+phy)/w([r],[phy]) = w1 * w2^(-1) = w1 + neg(w2)
         # The same is the done for the commitments
         # we do this because the witness and the commitment is an elliptic curve point (x,y,z)
-        srEval, zphyEval = self.__eval(sr, zphy, 100)
-        publicSharingWitness = compute_proof_single(sr, zphy, 100, self.__setup)
+        tic = cnt()
 
         for i in range(self.PARTIES):
             r_phyWitness, rEval, phyEval, b = proof[i][0]
-            proofs[i] = [curve.add(publicSharingWitness, curve.neg(r_phyWitness)), x[i], srEval - rEval,
+            srEval, zphyEval = self.__eval(sr, zphy, b)
+            publicSharingWitness = compute_proof_single(sr, zphy, b, self.__setup)
+            proofs[i] = [curve.add(publicSharingWitness, curve.neg(r_phyWitness)), b, srEval - rEval,
                          zphyEval - phyEval]
             r_phyCommitment = commitments[i][0]
             partyCommitments[i] = curve.add(commitment, curve.neg(r_phyCommitment))
@@ -394,13 +456,15 @@ class Setup:
         toc = cnt()
 
         print(f"FINISH PROTOCOL in {(toc - tic):0.6f} seconds")
-
+        self.ref += (toc - tic)
         return sShares, zShares, rRec, partyCommitments, proofs
 
 
-if __name__ == "__main__":
+def main():
+    time = 0
     print("THE SECRET IS THE NUMBER 10")
     print()
+    tic = cnt()
     test = Setup()
     print()
     c = test.distribution()
@@ -427,7 +491,7 @@ if __name__ == "__main__":
     final.verification(o, c)
     print()
 
-    r, phy, rTilde, phyTilde, oCommit, nCommit, oProof, nProof = final.output(o, c)
+    r, phy, rTilde, phyTilde, oCommit, nCommit, oProof, nProof = final.output(o, c,proofs)
     print()
 
     s, z, commitment, proof = final.refresh(r, phy, s1, z1, rTilde, phyTilde, proofs, commitments, oProof, oCommit)
@@ -435,3 +499,19 @@ if __name__ == "__main__":
 
     res = list(s.items())
     print(final.reconstruction(res, commitment, proof))
+    toc = cnt()
+    time = toc - tic
+    print("TOTAL TIME - ", time)
+
+
+if __name__ == "__main__":
+    import cProfile, pstats
+
+    profiler = cProfile.Profile()
+    profiler.enable()
+    main()
+    profiler.disable()
+    stats = pstats.Stats(profiler).sort_stats("tottime")
+    stats.strip_dirs()
+    stats.print_stats()
+    stats.dump_stats('stats')

@@ -2,6 +2,7 @@
 Implementation of the Hand-off Phase
 """
 import sys
+from multiprocessing import Pool
 from time import perf_counter as cnt
 from py_ecc import optimized_bls12_381 as curve
 
@@ -32,6 +33,52 @@ class Handoff:
         fx = eval_poly_at(f, x)
         hx = eval_poly_at(h, x)
         return fx, hx
+
+    def task2(self, newCommittee, i, commit):
+        for j in range(self.PARTIES):
+            nCommit = commit[j][1]
+            witness = newCommittee[i][2][j]
+            xi, witnessTup = list(witness)[0]
+            w, fx, hx = witnessTup
+            if not check_proof_single(nCommit, w, xi, fx, hx, self.__setup):
+                print("Validation BAD FOR NEW %d %d" % (i, j))
+                self.nValidations.append((j, witness, nCommit))
+
+    def task1(self, i, oldCommittee, commit):
+        for j in range(self.PARTIES):
+            witness = oldCommittee[i][2][j]
+            xi, witnessTup = list(witness)[0]
+            w, fx, hx = witnessTup
+            oCommit = commit[j][0]
+
+            if not check_proof_single(oCommit, w, xi, fx, hx, self.__setup):
+                print("Validation BAD FOR OLD %d %d" % (i, j))
+                self.oValidations.append((j, witness, oCommit))
+
+    def task3(self, committee, x1, x2, i):
+        uPoly = committee[i][0]
+        vPoly = committee[i][1]
+        x1i = x1[i]
+        x2i = x2[i]
+        for j in range(self.PARTIES):
+            polyEvals = self.__eval(uPoly[0], vPoly[0], x1i[j])
+            polyTildeEvals = self.__eval(uPoly[1], vPoly[1], x2i[j])
+            return (i,
+                    {
+                        x1i[j]: (
+                            compute_proof_single(uPoly[0], vPoly[0], x1i[j], self.__setup),
+                            polyEvals[0],
+                            polyEvals[1]
+                        )
+                    },
+                    {
+                        x2i[j]: (
+                            compute_proof_single(uPoly[1], vPoly[1], x2i[j], self.__setup),
+                            polyTildeEvals[0],
+                            polyTildeEvals[1]
+                        )
+                    }
+                    )
 
     def distribution(self):
         """
@@ -81,25 +128,26 @@ class Handoff:
             vPoly = committee[i][1]
             x1i = x1[i]
             x2i = x2[i]
+            w = []
             for j in range(self.PARTIES):
                 polyEvals = self.__eval(uPoly[0], vPoly[0], x1i[j])
                 polyTildeEvals = self.__eval(uPoly[1], vPoly[1], x2i[j])
-                proof[i] = (
-                    {
-                        x1i[j]: (
-                            compute_proof_single(uPoly[0], vPoly[0], x1i[j], self.__setup),
-                            polyEvals[0],
-                            polyEvals[1]
-                        )
-                    },
-                    {
-                        x2i[j]: (
-                            compute_proof_single(uPoly[1], vPoly[1], x2i[j], self.__setup),
-                            polyTildeEvals[0],
-                            polyTildeEvals[1]
-                        )
-                    }
-                )
+                w.append ((
+                    [
+                        compute_proof_single(uPoly[0], vPoly[0], x1i[j], self.__setup),
+                        polyEvals[0],
+                        polyEvals[1],
+                        x1i[j]
+
+                    ],
+                    [
+                        compute_proof_single(uPoly[1], vPoly[1], x2i[j], self.__setup),
+                        polyTildeEvals[0],
+                        polyTildeEvals[1],
+                        x2i[j]
+                    ]
+                ))
+            proof[i] = w
 
         toc = cnt()
         print(f"Proofs done in {(toc - tic) / self.PARTIES:0.6f} seconds per Party i")
@@ -118,22 +166,22 @@ class Handoff:
             vTilde = committee[i][3][1]
 
             # for each witness extract the following: [x,(proof,f(x),h(x))]
-            witness = proof[i][0].items()
-            witnessTilde = proof[i][1].items()
+            witness = proof[i]
+            witnessTilde = proof[i]
             for j in range(self.PARTIES):
                 if j not in oldCommittee:
-                    oldCommittee[j] = ([uShares[j]], [vShares[j]], [witness])
+                    oldCommittee[j] = ([uShares[j]], [vShares[j]], [witness[j][0]])
                 else:
                     oldCommittee[j][0].append(uShares[j])
                     oldCommittee[j][1].append(vShares[j])
-                    oldCommittee[j][2].append(witness)
+                    oldCommittee[j][2].append(witness[j][0])
 
                 if j not in newCommittee:
-                    newCommittee[j] = ([uTilde[j]], [vTilde[j]], [witnessTilde])
+                    newCommittee[j] = ([uTilde[j]], [vTilde[j]], [witnessTilde[j][1]])
                 else:
                     newCommittee[j][0].append(uTilde[j])
                     newCommittee[j][1].append(vTilde[j])
-                    newCommittee[j][2].append(witnessTilde)
+                    newCommittee[j][2].append(witnessTilde[j][1])
 
         toc = cnt()
         print(f"Distribute done in {(toc - tic) / self.PARTIES:0.6f} seconds per party i")
@@ -143,23 +191,27 @@ class Handoff:
         print("Starting validation - O(n^2)")
         for i in range(self.PARTIES):
             for j in range(self.PARTIES):
-                witness = oldCommittee[i][2][j]
-                xi, witnessTup = list(witness)[0]
-                w, fx, hx = witnessTup
+
+                w, fx, hx, xi = oldCommittee[i][2][j]
                 oCommit = self.commit[j][0]
 
                 if not check_proof_single(oCommit, w, xi, fx, hx, self.__setup):
                     print("Validation BAD FOR OLD %d %d" % (i, j))
-                    self.oValidations.append((j, witness, oCommit))
+                    self.oValidations.append((j, oldCommittee[i][2][j], oCommit))
 
                 nCommit = self.commit[j][1]
-                witness = newCommittee[i][2][j]
-                xi, witnessTup = list(witness)[0]
-                w, fx, hx = witnessTup
+                w, fx, hx, xi = newCommittee[i][2][j]
                 if not check_proof_single(nCommit, w, xi, fx, hx, self.__setup):
                     print("Validation BAD FOR NEW %d %d" % (i, j))
-                    self.nValidations.append((j, witness, nCommit))
+                    self.nValidations.append((j, newCommittee[i][2][j], nCommit))
 
+        # with Pool() as p:
+        #     items = [(i, oldCommittee, self.commit) for i in range(self.PARTIES)]
+        #     p.starmap(self.task1, items)
+        #
+        # with Pool() as p:
+        #     items = [(newCommittee, i, self.commit) for i in range(self.PARTIES)]
+        #     p.starmap(self.task2, items)
         toc = cnt()
         print(f"Validation done in {(toc - tic) / self.PARTIES:0.6f} seconds per party i")
         return oldCommittee, newCommittee
@@ -268,7 +320,11 @@ class Handoff:
         oldCommittee = {}
         newCommittee = {}
         # TODO: MAKE HASH
-        x = 5431
+        hashing1 = fsh(self.__setup, self.__setup[1][2])
+        hashing2 = fsh(self.__setup, self.__setup[1][3])
+
+        x1 = [int.from_bytes(hashing1.read(j + 1), byteorder='big') for j in range(self.PARTIES)]
+        x2 = [int.from_bytes(hashing2.read(j + 1), byteorder='big') for j in range(self.PARTIES)]
 
         tic = cnt()
         print("COMPUTING F(X), H(X), F~(X), H~(X) AND THEIR WITNESSES")
@@ -278,10 +334,10 @@ class Handoff:
             # For the new/old committee create the dictionary {party : (F(X),H(X),w}
             fx, hx = _compute(oldC, oldCommitteeD2, i, lambdas)
             oldCommittee[i] = (fx[0], hx[0],
-                               compute_proof_single(fx[1], hx[1], x, self.__setup))
+                               compute_proof_single(fx[1], hx[1], x1[i], self.__setup))
             fx, hx = _compute(newC, newCommitteeD2, i, lambdas)
             newCommittee[i] = (fx[0], hx[0],
-                               compute_proof_single(fx[1], hx[1], x, self.__setup))
+                               compute_proof_single(fx[1], hx[1], x2[i], self.__setup))
         toc = cnt()
         print(f"Compute F(X) and H(X) with their w in {(toc - tic) / self.PARTIES:0.6f} seconds per party")
 
@@ -323,7 +379,7 @@ class Handoff:
         # assert checkNewCommitments == nCommit
         # assert checkOldCommitments == oCommit
 
-    def output(self, oldCommittee, newCommittee):
+    def output(self, oldCommittee, newCommittee,b):
         """
         Protocol 7 "Output"
         :return:
@@ -352,23 +408,23 @@ class Handoff:
         oProof = {}
         # x = {}
         print("COMMITING TO R AND PHY AND THEIR WITNESSES FOR THE OLD COMMITTEE")
-        x = [i for i in range(100, 110)]
         tic = cnt()
         for i in range(self.PARTIES):
             uSharesOldCommittee = oldCommittee[i][0]
             vSharesOldCommittee = oldCommittee[i][1]
             commitments = []
             witnesses = []
+            x = b[i][1]
             for j in range(self.PARTIES):
                 ui = [uSharesOldCommittee[j][1]] * self.THRESHOLD
                 vi = [vSharesOldCommittee[j][1]] * self.THRESHOLD
                 commit = commit_to_poly(ui, vi, self.__setup)
                 # hashing = fsh(self.__setup, commit)
                 # x = int.from_bytes(hashing.read(j + 1), byteorder='big')
-                polyEvals = self.__eval(ui, vi, x[j])
-                witness = compute_proof_single(ui, vi, x[j], self.__setup)
+                polyEvals = self.__eval(ui, vi, x)
+                witness = compute_proof_single(ui, vi, x, self.__setup)
                 commitments.append(commit)
-                witnesses.append((witness, polyEvals[0], polyEvals[1], x[j]))
+                witnesses.append((witness, polyEvals[0], polyEvals[1], x))
                 break
 
             oCommit[i] = commitments
@@ -391,12 +447,12 @@ class Handoff:
                 ui = [uSharesNewCommittee[j][1]] * self.THRESHOLD
                 vi = [vSharesNewCommittee[j][1]] * self.THRESHOLD
                 commit = commit_to_poly(ui, vi, self.__setup)
-                # hashing = fsh(self.__setup, commit)
-                # x = int.from_bytes(hashing.read(j + 1), byteorder='big')
-                polyEvals = self.__eval(ui, vi, x[j])
-                witness = compute_proof_single(ui, vi, x[j], self.__setup)
+                hashing = fsh(self.__setup, commit)
+                x = int.from_bytes(hashing.read(j + 1), byteorder='big')
+                polyEvals = self.__eval(ui, vi, x)
+                witness = compute_proof_single(ui, vi, x, self.__setup)
                 commitments.append(commit)
-                witnesses.append((witness, polyEvals[0], polyEvals[1], x[j]))
+                witnesses.append((witness, polyEvals[0], polyEvals[1], x))
                 break
 
             nCommit[i] = commitments
@@ -419,7 +475,6 @@ class Handoff:
         # {Party : [u],[v],w,[s],[r],[z],[phy]}
         # {Party: (sr,zphy)}
         print("PROTOCOL 8 REFRESH")
-        print("NOTE: I DONT HAVE COMMITMENTS AND WITNESSES HERE SO NO VALIDATIONS")
         sr = {}
         zphy = {}
         kingSR = []
@@ -460,16 +515,17 @@ class Handoff:
         zphyReconstruct = self.sss.getPoly(kingZPHY)
 
         commitment = commit_to_poly(srReconstruct, zphyReconstruct, self.__setup)
-        polyEvals = self.__eval(srReconstruct, zphyReconstruct, 100)
-        proof = compute_proof_single(srReconstruct, zphyReconstruct, 100, self.__setup)
-        wintess = [proof, polyEvals[0], polyEvals[1], 100]
 
         nCommit = {}
         nProofs = {}
         for i in range(self.PARTIES):
             r_phyWitness, rEval, phyEval, b = rphyWitnesses[i][0]
+            polyEvals = self.__eval(srReconstruct, zphyReconstruct, b)
+            proof = compute_proof_single(srReconstruct, zphyReconstruct, b, self.__setup)
+            wintess = [proof, polyEvals[0], polyEvals[1], b]
+
             nProofs[i] = [curve.add(wintess[0], curve.neg(r_phyWitness)), wintess[1] - rEval,
-                          wintess[2] - phyEval, 100]
+                          wintess[2] - phyEval, b]
             r_phyCommitment = rphyCommitments[i][0]
             nCommit[i] = curve.add(commitment, curve.neg(r_phyCommitment))
 
